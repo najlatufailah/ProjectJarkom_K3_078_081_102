@@ -253,4 +253,204 @@ Total kabel fisik pada Gambar 1 adalah 36.
 | R-PELABUHAN | Gi0/1 | Kantor Pelabuhan | 10.24.240.0/25 | 10.24.240.1 | /25 |
 | R-PELABUHAN | Tunnel0 | R-PUSAT | 192.168.3.0/30 | 192.168.3.2 | /30 |
  
+# Mid-Project Jarkom K3: Routing dan Koneksi (Anggota 2)
+
+Implementasi jaringan Smart City Kota Surabaya di Cisco Packet Tracer. Dokumen ini menjelaskan bagian **Anggota 2**: konfigurasi IP interface router, static routing dan default route, NAT/PAT ke 8.8.8.8, GRE tunnel R-PUSAT dan R-PELABUHAN, serta pengujian koneksi antarlokasi.
+
+
+## Ringkasan
+
+Semua lokasi saling terhubung dan dapat mengakses server internet 8.8.8.8. Pengujian dilakukan dari 8 PC dan 1 server dengan ping dan traceroute, dan semuanya berhasil. Lalu lintas pusat ke pelabuhan terbukti melewati GRE tunnel (hop `192.168.3.2` muncul di traceroute).
+
+| Bagian | Isi |
+|---|---|
+| Perangkat | 8 router Cisco 2911 (R-ISP, R-PUSAT, R-DC, R-UTARA, R-SELATAN, R-TIMUR, R-BARAT, R-PELABUHAN) |
+| Rancangan alamat | VLSM, blok `10.24.0.0/16` (dari Anggota 1) |
+| Routing | Static route dan default route |
+| Akses internet | NAT/PAT (overload) di R-PUSAT |
+| Tunnel | GRE `192.168.3.0/30` antara R-PUSAT dan R-PELABUHAN |
+
+Pembagian tugas kelompok: Anggota 1 (topologi dan IP addressing), **Anggota 2 (routing dan koneksi, dokumen ini)**, Anggota 3 (server, DHCP, OSPF).
+
+## Topologi
+
+![Topologi](assets/00-topologi.png)
+
+Link antar-router memakai kabel **serial** (modul HWIC-2T), karena Cisco 2911 hanya memiliki 3 port Gigabit. R-PUSAT memakai 3 modul HWIC-2T untuk 5 link serial.
+
+## Alamat IP
+
+**Link antar-router, ISP, dan tunnel**
+
+| Link | Subnet | Ujung 1 | Ujung 2 |
+|---|---|---|---|
+| L1 | 10.24.241.32/30 | R-PUSAT Se0/0/0 (.33) | R-DC Se0/0/0 (.34) |
+| L2 | 10.24.241.36/30 | R-PUSAT Se0/0/1 (.37) | R-UTARA Se0/0/0 (.38) |
+| L3 | 10.24.241.40/30 | R-PUSAT Se0/1/0 (.41) | R-SELATAN Se0/0/0 (.42) |
+| L4 | 10.24.241.44/30 | R-PUSAT Se0/1/1 (.45) | R-TIMUR Se0/0/0 (.46) |
+| L5 | 10.24.241.48/30 | R-PUSAT Se0/2/0 (.49) | R-BARAT Se0/0/0 (.50) |
+| L6 | 10.24.241.52/30 | R-UTARA Se0/0/1 (.53) | R-PELABUHAN Se0/0/0 (.54) |
+| ISP | 203.0.113.12/30 | R-PUSAT Gi0/0 (.13) | R-ISP Gi0/0 (.14) |
+| Server internet | 8.8.8.0/24 | R-ISP Gi0/1 (8.8.8.1) | SRV-INTERNET (8.8.8.8) |
+| GRE | 192.168.3.0/30 | R-PUSAT Tunnel0 (.1) | R-PELABUHAN Tunnel0 (.2) |
+
+**Gateway LAN per router**
+
+| Router | Port | LAN | Gateway / prefix |
+|---|---|---|---|
+| R-PUSAT | Gi0/2 | Pegawai Balai Kota | 10.24.224.1 /21 |
+| R-PUSAT | Gi0/1 | Server Balai Kota | 10.24.241.1 /27 |
+| R-DC | Gi0/1 | CCTV Kota | 10.24.96.1 /19 |
+| R-DC | Gi0/2 | Server dan Storage DC | 10.24.239.1 /24 |
+| R-UTARA | Gi0/2 | WiFi Publik Utara | 10.24.0.1 /18 |
+| R-UTARA | Gi0/1 | Sensor Lalu Lintas Utara | 10.24.236.1 /23 |
+| R-SELATAN | Gi0/1 | WiFi Publik Selatan | 10.24.64.1 /19 |
+| R-SELATAN | Gi0/2 | PJU Pintar Selatan | 10.24.240.129 /25 |
+| R-TIMUR | Gi0/1 | WiFi Publik Timur | 10.24.128.1 /19 |
+| R-TIMUR | Gi0/2 | Sensor Banjir Timur | 10.24.232.1 /22 |
+| R-BARAT | Gi0/1 | WiFi Publik Barat | 10.24.192.1 /19 |
+| R-BARAT | Gi0/2 | Puskesmas dan Sekolah Barat | 10.24.238.1 /24 |
+| R-PELABUHAN | Gi0/0 | Sensor dan SCADA Pelabuhan | 10.24.160.1 /19 |
+| R-PELABUHAN | Gi0/1 | Kantor Pelabuhan | 10.24.240.1 /25 |
+
+![IP interface R-PUSAT](assets/01-ip-interface-r-pusat.png)
+
+![Tetangga R-PUSAT (CDP)](assets/03-cdp-neighbors-r-pusat.png)
+
+## Static route dan default route
+
+R-PUSAT menyimpan route spesifik ke semua LAN cabang dan default route ke R-ISP. Router cabang cukup memakai default route ke R-PUSAT karena hanya punya satu jalur keluar.
+
+**R-PUSAT**
+
+| Tujuan | Next-hop | Lewat |
+|---|---|---|
+| 10.24.0.0/18 | 10.24.241.38 | R-UTARA |
+| 10.24.236.0/23 | 10.24.241.38 | R-UTARA |
+| 10.24.241.52/30 (L6) | 10.24.241.38 | R-UTARA |
+| 10.24.64.0/19 | 10.24.241.42 | R-SELATAN |
+| 10.24.240.128/25 | 10.24.241.42 | R-SELATAN |
+| 10.24.96.0/19 | 10.24.241.34 | R-DC |
+| 10.24.239.0/24 | 10.24.241.34 | R-DC |
+| 10.24.128.0/19 | 10.24.241.46 | R-TIMUR |
+| 10.24.232.0/22 | 10.24.241.46 | R-TIMUR |
+| 10.24.192.0/19 | 10.24.241.50 | R-BARAT |
+| 10.24.238.0/24 | 10.24.241.50 | R-BARAT |
+| 10.24.160.0/19 | 192.168.3.2 | Tunnel GRE ke R-PELABUHAN |
+| 10.24.240.0/25 | 192.168.3.2 | Tunnel GRE ke R-PELABUHAN |
+| 0.0.0.0/0 | 203.0.113.14 | R-ISP (internet) |
+
+**Router cabang**
+
+| Router | Route |
+|---|---|
+| R-DC | default 10.24.241.33 |
+| R-SELATAN | default 10.24.241.41 |
+| R-TIMUR | default 10.24.241.45 |
+| R-BARAT | default 10.24.241.49 |
+| R-UTARA | default 10.24.241.37; 10.24.160.0/19 dan 10.24.240.0/25 via 10.24.241.54 (langsung ke R-PELABUHAN lewat L6) |
+| R-PELABUHAN | default 10.24.241.53 (via R-UTARA); 10.24.0.0/16 via 192.168.3.1 (tunnel ke R-PUSAT); 10.24.241.36/30, 10.24.0.0/18, dan 10.24.236.0/23 via 10.24.241.53 |
+
+![show ip route R-PUSAT](assets/04-route-r-pusat.png)
+
+![show ip route R-PELABUHAN](assets/05-route-r-pelabuhan.png)
+
+![show ip route R-DC (contoh cabang)](assets/06-route-r-dc.png)
+
+## NAT/PAT ke 8.8.8.8
+
+R-PUSAT menerjemahkan alamat 10.24.0.0/16 dan 192.168.3.0/30 menjadi 203.0.113.13 (PAT/overload) di interface Gi0/0 yang menghadap R-ISP.
+
+- Outside: Gi0/0.
+- Inside: Gi0/1, Gi0/2, dan kelima port serial.
+
+```
+access-list 1 permit 10.24.0.0 0.0.255.255
+access-list 1 permit 192.168.3.0 0.0.0.3
+ip nat inside source list 1 interface GigabitEthernet0/0 overload
+```
+
+Packet Tracer menolak `ip nat inside` di interface Tunnel0. Karena itu R-PELABUHAN mengirim trafik internetnya lewat R-UTARA (default route), sehingga masuk R-PUSAT dari port serial yang berstatus inside, sedangkan trafik ke jaringan kota tetap lewat tunnel.
+
+Istilah di tabel NAT: **inside local** adalah IP asli perangkat (misalnya 10.24.224.10), **inside global** adalah alamat publik setelah diterjemahkan (203.0.113.13).
+
+![show ip nat translations](assets/14-nat-translations.png)
+
+![show ip nat statistics](assets/15-nat-statistics.png)
+
+## GRE tunnel
+
+| | R-PUSAT | R-PELABUHAN |
+|---|---|---|
+| IP tunnel | 192.168.3.1/30 | 192.168.3.2/30 |
+| Tunnel source | Serial0/0/1 (10.24.241.37) | Serial0/0/0 (10.24.241.54) |
+| Tunnel destination | 10.24.241.54 | 10.24.241.37 |
+| Mode | gre ip | gre ip |
+
+Paket GRE dibawa lewat jalur fisik R-PUSAT, R-UTARA, lalu R-PELABUHAN (L2 dan L6). Agar tunnel tidak rekursif, alamat tujuan tunnel dijangkau lewat route /30 ke arah R-UTARA (10.24.241.52/30 di R-PUSAT dan 10.24.241.36/30 di R-PELABUHAN).
+
+```
+interface Tunnel0
+ ip address 192.168.3.1 255.255.255.252
+ tunnel source Serial0/0/1
+ tunnel destination 10.24.241.54
+ tunnel mode gre ip
+```
+
+![show interface tunnel0 R-PUSAT](assets/07-tunnel-r-pusat.png)
+
+![show interface tunnel0 R-PELABUHAN](assets/08-tunnel-r-pelabuhan.png)
+
+## Pengujian
+
+TTL pada balasan menunjukkan jumlah router yang dilewati jalur pulang (PC/server mulai dari 128, router dari 255).
+
+| Asal | Tujuan | Hasil | Bukti |
+|---|---|---|---|
+| R-PUSAT | R-DC, R-UTARA, R-SELATAN, R-TIMUR, R-BARAT (10.24.241.34 / .38 / .42 / .46 / .50) | 5/5 tiap tujuan | link serial up/up |
+| R-PUSAT | 192.168.3.2 (ujung tunnel) | 5/5 | tunnel membawa paket |
+| R-PUSAT | 8.8.8.8 | 5/5 | akses internet dari router |
+| PC-PEGAWAI | 8.8.8.8 | 4/4 | TTL 126 |
+| PC-PEGAWAI | PC-CCTV-KOTA (10.24.96.10) | 4/4 | TTL 126 |
+| PC-PEGAWAI | PC-SCADA (10.24.160.10) | 4/4 | tracert: 10.24.224.1, 192.168.3.2, 10.24.160.10 |
+| PC-CCTV-KOTA | 8.8.8.8 | 4/4 | TTL 125 |
+| PC-CCTV-KOTA | PC-SCADA | 4/4 | tracert: 10.24.96.1, 10.24.241.33, 192.168.3.2, 10.24.160.10 |
+| PC-SCADA | 8.8.8.8 | 4/4 | TTL 125 |
+| PC-SCADA | PC-CCTV-KOTA | berhasil | tracert: 10.24.160.1, 192.168.3.1, 10.24.241.34, 10.24.96.10 |
+| PC-PUSKESMAS | 8.8.8.8 dan PC-SCADA | 4/4 | TTL 125 |
+| PC-SENSOR-LALIN | 8.8.8.8 | 4/4 | TTL 125 |
+| PC-SENSOR-LALIN | PC-SCADA | berhasil tanpa tunnel | tracert: 10.24.236.1, 10.24.241.54, 10.24.160.10 |
+| PC-SENSOR-BANJIR | 8.8.8.8 dan PC-PEGAWAI | 4/4 | TTL 125 dan 126 |
+| PC-PJU | 8.8.8.8 dan PC-SCADA | 4/4 | TTL 125 |
+| PC-KANTOR-PEL | 8.8.8.8 dan PC-PEGAWAI | 4/4 | TTL 125 dan 126 |
+| SRV-BALAIKOTA | gateway, 8.8.8.8, PC-PEGAWAI | 4/4 | TTL 255, 126, 127 |
+| R-PUSAT | `show ip nat translations` saat `ping -t 8.8.8.8` | 17 entri icmp | 10.24.224.10 menjadi 203.0.113.13 |
+
+Ping pertama yang kadang timeout hanya karena ARP.
+
+![Ping dari PC-PEGAWAI](assets/10-ping-pc-pegawai.png)
+
+![Tracert PC-PEGAWAI ke PC-SCADA](assets/11-tracert-pegawai-scada.png)
+
+![Tracert PC-CCTV-KOTA ke PC-SCADA](assets/12-tracert-cctv-scada.png)
+
+![Tracert PC-SENSOR-LALIN ke PC-SCADA (tanpa tunnel)](assets/13-tracert-lalin-scada.png)
+
+![Ping antar-link dari R-PUSAT](assets/09-ping-link-r-pusat.png)
+
+![Ping 8.8.8.8 dari PC lain](assets/16-ping-8888-pc.png)
+
+![Running-config R-PUSAT](assets/17-running-config-r-pusat.png)
+
+## Kendala dan solusi
+
+| Kendala | Solusi |
+|---|---|
+| Link antar-router di topologi memakai kabel serial, sedangkan rancangan awal menulis Gigabit | Memakai port Serial pada modul HWIC-2T |
+| Kabel LAN router cabang ada di Gi0/1 dan Gi0/2, bukan Gi0/0 dan Gi0/1 | Memindahkan IP LAN ke port yang sesuai kabel |
+| Port LAN R-PUSAT dan R-UTARA tertukar | Menukar IP antar-port |
+| `ip nat inside` ditolak di Tunnel0 | Default route R-PELABUHAN diarahkan ke R-UTARA, route 10.24.0.0/16 ke tunnel |
+| `ping ... source ...` satu baris ditolak Packet Tracer | Memakai extended ping interaktif atau tes dari PC |
+
+Catatan untuk tahap OSPF: static route memiliki AD 1 dan menang atas OSPF (AD 110). Hapus static route antar-router atau jadikan floating (AD 200) sebelum uji failover link L7.
 

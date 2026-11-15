@@ -1,0 +1,441 @@
+========================================================================
+MID-PROJECT JARKOM K3 - ANGGOTA 2: ROUTING & KONEKSI (Cisco 2911, Packet Tracer)
+Dasar: tabel VLSM & Interface dari Anggota 1 (blok 10.24.0.0/16, GRE 192.168.3.0/30)
+========================================================================
+
+LANGKAH 0 - CEK DULU SEBELUM PASTE (penting)
+1. Kabel antar-router di topologi = SERIAL (garis merah bergerigi), bukan Gigabit.
+   Sheet Interface Anggota 1 masih menulis Gi0/x untuk link antar-router; di file ini
+   semuanya diganti port Serial. Router 2911 hanya punya 3 port Gigabit, jadi link
+   router-router memang harus serial.
+2. Modul yang harus terpasang (matikan router dulu, drag HWIC-2T ke slot, nyalakan lagi):
+   R-PUSAT: 3x HWIC-2T (5 serial) | R-UTARA: 1x (2 serial; +1x lagi saat L7 ditambah)
+   R-DC: 1x | R-SELATAN: 1x | R-TIMUR: 1x | R-BARAT: 1x | R-PELABUHAN: 1x
+3. Nama port di file ini ASUMSI (urutan slot). Cek yang sebenarnya di tiap router:
+      show cdp neighbors          <- tampil port lokal -> perangkat tetangga & port-nya
+      show ip interface brief
+   Kalau beda (mis. link ke R-DC ternyata Serial0/1/0), ganti nama interface-nya saja
+   di blok router itu (cari-ganti nama port, termasuk "tunnel source").
+   Asumsi yang dipakai:
+     R-PUSAT : Gi0/0=R-ISP, Gi0/1=SW-SRV-BALAIKOTA, Gi0/2=SW-PEGAWAI,
+               Se0/0/0=R-DC, Se0/0/1=R-UTARA, Se0/1/0=R-SELATAN, Se0/1/1=R-TIMUR, Se0/2/0=R-BARAT
+     cabang  : LAN pertama (WiFi/CCTV/SCADA) di Gi0/1, LAN kedua di Gi0/2, Gi0/0 kosong, Se0/0/0 = ke R-PUSAT
+               (LAN dengan PC uji terkonfirmasi lewat ping; port WiFi (tanpa PC) hanya terkonfirmasi up/up.
+                Pengecualian R-UTARA: Gi0/1 = Sensor, Gi0/2 = WiFi;
+                R-PELABUHAN: Gi0/0 = SCADA, Gi0/1 = Kantor, Gi0/2 kosong)
+     R-UTARA : Se0/0/0=R-PUSAT, Se0/0/1=R-PELABUHAN
+     R-PELABUHAN: Se0/0/0=R-UTARA
+4. clock rate ditulis di KEDUA ujung serial. Di ujung DTE router membalas
+   "This command applies only to DCE interfaces" - abaikan, tidak berbahaya.
+   Cek sisi DCE: show controllers serial0/0/0 (di R-PUSAT).
+5. Urutan konfigurasi bebas, tapi tunnel baru up setelah R-PUSAT, R-UTARA, dan
+   R-PELABUHAN selesai. Tiap blok mulai dari "enable" sampai "write memory".
+
+DESAIN ROUTING (ringkas)
+- Cabang (DC, SELATAN, TIMUR, BARAT): default route ke R-PUSAT.
+- R-PUSAT: static route spesifik ke semua LAN cabang + default ke R-ISP (203.0.113.14).
+- LAN Pelabuhan dari R-PUSAT lewat Tunnel0 (next-hop 192.168.3.2), sehingga traceroute
+  pusat -> pelabuhan melewati tunnel. Paket GRE sendiri dibawa fisik via R-UTARA (L2 + L6).
+- Tujuan tunnel (10.24.241.54 / 10.24.241.37) SENGAJA punya route /30 lewat jalur fisik
+  supaya tidak rekursif (tunnel tidak boleh mencari tujuannya lewat tunnel sendiri).
+- R-PELABUHAN: default ke R-UTARA (10.24.241.53), 10.24.0.0/16 via tunnel (192.168.3.1); LAN R-UTARA langsung via L6.
+- NAT/PAT di R-PUSAT (outside = Gi0/0): ACL 1 = 10.24.0.0/16 + 192.168.3.0/30.
+  (Packet Tracer tidak menerima "ip nat inside" di Tunnel0, maka internet dari pelabuhan keluar lewat R-UTARA, bukan tunnel.)
+
+========================================================================
+BAGIAN A - KONFIGURASI PER ROUTER (copy satu blok, paste di CLI router terkait)
+========================================================================
+
+========================================================================
+### R-ISP
+========================================================================
+enable
+configure terminal
+hostname R-ISP
+no ip domain-lookup
+!
+interface GigabitEthernet0/0
+ description Link ke R-PUSAT
+ ip address 203.0.113.14 255.255.255.252
+ no shutdown
+!
+interface GigabitEthernet0/1
+ description Gateway SRV-INTERNET 8.8.8.8
+ ip address 8.8.8.1 255.255.255.0
+ no shutdown
+!
+end
+write memory
+
+========================================================================
+### R-PUSAT
+========================================================================
+enable
+configure terminal
+hostname R-PUSAT
+no ip domain-lookup
+!
+interface GigabitEthernet0/0
+ description Link ke R-ISP (NAT outside)
+ ip address 203.0.113.13 255.255.255.252
+ ip nat outside
+ no shutdown
+!
+interface GigabitEthernet0/2
+ description LAN Pegawai Balai Kota
+ ip address 10.24.224.1 255.255.248.0
+ ip nat inside
+ no shutdown
+!
+interface GigabitEthernet0/1
+ description LAN Server Balai Kota
+ ip address 10.24.241.1 255.255.255.224
+ ip nat inside
+ no shutdown
+!
+interface Serial0/0/0
+ description L1 ke R-DC
+ ip address 10.24.241.33 255.255.255.252
+ clock rate 64000
+ ip nat inside
+ no shutdown
+!
+interface Serial0/0/1
+ description L2 ke R-UTARA
+ ip address 10.24.241.37 255.255.255.252
+ clock rate 64000
+ ip nat inside
+ no shutdown
+!
+interface Serial0/1/0
+ description L3 ke R-SELATAN
+ ip address 10.24.241.41 255.255.255.252
+ clock rate 64000
+ ip nat inside
+ no shutdown
+!
+interface Serial0/1/1
+ description L4 ke R-TIMUR
+ ip address 10.24.241.45 255.255.255.252
+ clock rate 64000
+ ip nat inside
+ no shutdown
+!
+interface Serial0/2/0
+ description L5 ke R-BARAT
+ ip address 10.24.241.49 255.255.255.252
+ clock rate 64000
+ ip nat inside
+ no shutdown
+!
+! LAN WiFi Utara
+ip route 10.24.0.0 255.255.192.0 10.24.241.38
+! LAN Sensor Utara
+ip route 10.24.236.0 255.255.254.0 10.24.241.38
+! L6 (juga jalur fisik tujuan tunnel)
+ip route 10.24.241.52 255.255.255.252 10.24.241.38
+! LAN WiFi Selatan
+ip route 10.24.64.0 255.255.224.0 10.24.241.42
+! LAN PJU Selatan
+ip route 10.24.240.128 255.255.255.128 10.24.241.42
+! LAN CCTV DC
+ip route 10.24.96.0 255.255.224.0 10.24.241.34
+! LAN Server DC
+ip route 10.24.239.0 255.255.255.0 10.24.241.34
+! LAN WiFi Timur
+ip route 10.24.128.0 255.255.224.0 10.24.241.46
+! LAN Sensor Banjir Timur
+ip route 10.24.232.0 255.255.252.0 10.24.241.46
+! LAN WiFi Barat
+ip route 10.24.192.0 255.255.224.0 10.24.241.50
+! LAN Puskesmas Barat
+ip route 10.24.238.0 255.255.255.0 10.24.241.50
+! LAN SCADA Pelabuhan (via tunnel GRE)
+ip route 10.24.160.0 255.255.224.0 192.168.3.2
+! LAN Kantor Pelabuhan (via tunnel GRE)
+ip route 10.24.240.0 255.255.255.128 192.168.3.2
+! default ke R-ISP / internet
+ip route 0.0.0.0 0.0.0.0 203.0.113.14
+!
+access-list 1 permit 10.24.0.0 0.0.255.255
+access-list 1 permit 192.168.3.0 0.0.0.3
+ip nat inside source list 1 interface GigabitEthernet0/0 overload
+!
+interface Tunnel0
+ description GRE ke R-PELABUHAN
+ ip address 192.168.3.1 255.255.255.252
+ tunnel source Serial0/0/1
+ tunnel destination 10.24.241.54
+ tunnel mode gre ip
+ no shutdown
+!
+end
+write memory
+
+========================================================================
+### R-DC
+========================================================================
+enable
+configure terminal
+hostname R-DC
+no ip domain-lookup
+!
+interface GigabitEthernet0/1
+ description LAN CCTV Kota
+ ip address 10.24.96.1 255.255.224.0
+ no shutdown
+!
+interface GigabitEthernet0/2
+ description LAN Server dan Storage DC
+ ip address 10.24.239.1 255.255.255.0
+ no shutdown
+!
+interface Serial0/0/0
+ description L1 ke R-PUSAT
+ ip address 10.24.241.34 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+! default ke R-PUSAT
+ip route 0.0.0.0 0.0.0.0 10.24.241.33
+!
+end
+write memory
+
+========================================================================
+### R-UTARA
+========================================================================
+enable
+configure terminal
+hostname R-UTARA
+no ip domain-lookup
+!
+interface GigabitEthernet0/2
+ description LAN WiFi Publik Utara
+ ip address 10.24.0.1 255.255.192.0
+ no shutdown
+!
+interface GigabitEthernet0/1
+ description LAN Sensor Lalu Lintas Utara
+ ip address 10.24.236.1 255.255.254.0
+ no shutdown
+!
+interface Serial0/0/0
+ description L2 ke R-PUSAT
+ ip address 10.24.241.38 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+interface Serial0/0/1
+ description L6 ke R-PELABUHAN
+ ip address 10.24.241.53 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+! default ke R-PUSAT
+ip route 0.0.0.0 0.0.0.0 10.24.241.37
+! LAN SCADA Pelabuhan (langsung via L6)
+ip route 10.24.160.0 255.255.224.0 10.24.241.54
+! LAN Kantor Pelabuhan (langsung via L6)
+ip route 10.24.240.0 255.255.255.128 10.24.241.54
+!
+end
+write memory
+
+========================================================================
+### R-SELATAN
+========================================================================
+enable
+configure terminal
+hostname R-SELATAN
+no ip domain-lookup
+!
+interface GigabitEthernet0/1
+ description LAN WiFi Publik Selatan
+ ip address 10.24.64.1 255.255.224.0
+ no shutdown
+!
+interface GigabitEthernet0/2
+ description LAN PJU Pintar Selatan
+ ip address 10.24.240.129 255.255.255.128
+ no shutdown
+!
+interface Serial0/0/0
+ description L3 ke R-PUSAT
+ ip address 10.24.241.42 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+! default ke R-PUSAT
+ip route 0.0.0.0 0.0.0.0 10.24.241.41
+!
+end
+write memory
+
+========================================================================
+### R-TIMUR
+========================================================================
+enable
+configure terminal
+hostname R-TIMUR
+no ip domain-lookup
+!
+interface GigabitEthernet0/1
+ description LAN WiFi Publik Timur
+ ip address 10.24.128.1 255.255.224.0
+ no shutdown
+!
+interface GigabitEthernet0/2
+ description LAN Sensor Banjir Timur
+ ip address 10.24.232.1 255.255.252.0
+ no shutdown
+!
+interface Serial0/0/0
+ description L4 ke R-PUSAT
+ ip address 10.24.241.46 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+! default ke R-PUSAT
+ip route 0.0.0.0 0.0.0.0 10.24.241.45
+!
+end
+write memory
+
+========================================================================
+### R-BARAT
+========================================================================
+enable
+configure terminal
+hostname R-BARAT
+no ip domain-lookup
+!
+interface GigabitEthernet0/1
+ description LAN WiFi Publik Barat
+ ip address 10.24.192.1 255.255.224.0
+ no shutdown
+!
+interface GigabitEthernet0/2
+ description LAN Puskesmas dan Sekolah Barat
+ ip address 10.24.238.1 255.255.255.0
+ no shutdown
+!
+interface Serial0/0/0
+ description L5 ke R-PUSAT
+ ip address 10.24.241.50 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+! default ke R-PUSAT
+ip route 0.0.0.0 0.0.0.0 10.24.241.49
+!
+end
+write memory
+
+========================================================================
+### R-PELABUHAN
+========================================================================
+enable
+configure terminal
+hostname R-PELABUHAN
+no ip domain-lookup
+!
+interface GigabitEthernet0/0
+ description LAN Sensor dan SCADA Pelabuhan
+ ip address 10.24.160.1 255.255.224.0
+ no shutdown
+!
+interface GigabitEthernet0/1
+ description LAN Kantor Pelabuhan
+ ip address 10.24.240.1 255.255.255.128
+ no shutdown
+!
+interface Serial0/0/0
+ description L6 ke R-UTARA
+ ip address 10.24.241.54 255.255.255.252
+ clock rate 64000
+ no shutdown
+!
+! L2: jalur fisik ke tujuan tunnel (10.24.241.37)
+ip route 10.24.241.36 255.255.255.252 10.24.241.53
+! LAN WiFi Utara (langsung via L6)
+ip route 10.24.0.0 255.255.192.0 10.24.241.53
+! LAN Sensor Utara (langsung via L6)
+ip route 10.24.236.0 255.255.254.0 10.24.241.53
+! default ke R-UTARA (trafik internet masuk R-PUSAT lewat serial, jadi NAT jalan)
+ip route 0.0.0.0 0.0.0.0 10.24.241.53
+! jaringan kota lain via tunnel GRE ke R-PUSAT
+ip route 10.24.0.0 255.255.0.0 192.168.3.1
+!
+interface Tunnel0
+ description GRE ke R-PUSAT
+ ip address 192.168.3.2 255.255.255.252
+ tunnel source Serial0/0/0
+ tunnel destination 10.24.241.37
+ tunnel mode gre ip
+ no shutdown
+!
+end
+write memory
+
+========================================================================
+BAGIAN B - IP PERANGKAT AKHIR (kalau DHCP Anggota 3 belum jalan, set static dulu)
+========================================================================
+SRV-INTERNET   8.8.8.8        255.255.255.0      gw 8.8.8.1
+SRV-DC         10.24.239.2    255.255.255.0      gw 10.24.239.1   (dari sheet)
+SRV-BALAIKOTA  10.24.241.2    255.255.255.224    gw 10.24.241.1   (dari sheet)
+PC-PEGAWAI     10.24.224.10   255.255.248.0      gw 10.24.224.1
+PC-CCTV-KOTA   10.24.96.10    255.255.224.0      gw 10.24.96.1
+PC-PUSKESMAS   10.24.238.10   255.255.255.0      gw 10.24.238.1
+PC-SENSOR-LALIN 10.24.236.10  255.255.254.0      gw 10.24.236.1
+PC-SENSOR-BANJIR 10.24.232.10 255.255.252.0      gw 10.24.232.1
+PC-PJU         10.24.240.130  255.255.255.128    gw 10.24.240.129
+PC-SCADA       10.24.160.10   255.255.224.0      gw 10.24.160.1
+PC-KANTOR-PEL  10.24.240.10   255.255.255.128    gw 10.24.240.1
+(alamat host .10 hanyalah usulan; semua masih di dalam range host tiap subnet)
+
+========================================================================
+BAGIAN C - PENGUJIAN (isi kolom Hasil, lalu screenshot)
+========================================================================
+C1. Link langsung (dari router)
+  R-PUSAT : ping 203.0.113.14 | ping 10.24.241.34 | .38 | .42 | .46 | .50
+  R-UTARA : ping 10.24.241.54
+C2. GRE tunnel
+  R-PUSAT : show interface tunnel0   (harus up/up)  | ping 192.168.3.2
+  R-PELABUHAN : show interface tunnel0 | ping 192.168.3.1
+C3. Antar-lokasi (dari PC). Harapan: semua berhasil (Hasil: ... )
+  PC-PEGAWAI      -> PC-CCTV-KOTA, PC-PUSKESMAS, PC-SENSOR-LALIN, PC-SENSOR-BANJIR, PC-PJU, PC-SCADA, PC-KANTOR-PEL
+  PC-SCADA        -> PC-SENSOR-LALIN (langsung via L6), PC-CCTV-KOTA, PC-PJU
+  PC-KANTOR-PEL   -> PC-PEGAWAI
+  PC-CCTV-KOTA    -> PC-PUSKESMAS
+C4. Traceroute (tracert di PC) - bukti tunnel dipakai
+  PC-PEGAWAI -> PC-SCADA   : hop 10.24.224.1 -> 192.168.3.2 -> 10.24.160.10
+  PC-CCTV-KOTA -> PC-SCADA : hop 10.24.96.1 -> 10.24.241.33 -> 192.168.3.2 -> 10.24.160.10
+  PC-SENSOR-LALIN -> PC-SCADA (pembanding, TANPA tunnel): 10.24.236.1 -> 10.24.241.54 -> 10.24.160.10
+C5. Internet (NAT)
+  Semua PC : ping 8.8.8.8      (dari router: extended ping, lihat C6)
+  R-PUSAT  : show ip nat translations | show ip nat statistics
+C6. Tanpa PC (cadangan): extended ping dari router. Ketik "ping" saja lalu Enter, isi:
+      Protocol [ip]: Enter | Target IP address: <tujuan> | Repeat/Datagram/Timeout: Enter
+      Extended commands [n]: y | Source address or interface: <IP LAN router asal>
+      sisanya Enter sampai selesai. Contoh di R-DC: tujuan 8.8.8.8, source 10.24.96.1
+
+DAFTAR SCREENSHOT
+  1. show ip interface brief - 8 router (R-ISP s/d R-PELABUHAN)
+  2. show ip route - R-PUSAT (static + default), R-UTARA, R-PELABUHAN, satu router cabang
+  3. show cdp neighbors - R-PUSAT (bukti topologi serial & port)
+  4. show interface tunnel0 - R-PUSAT dan R-PELABUHAN
+  5. ping antar-link dan ping 192.168.3.2 dari R-PUSAT
+  6. ping antar-lokasi antar-PC (C3), satu screenshot per PC asal
+  7. tracert PC-PEGAWAI -> PC-SCADA dan PC-CCTV-KOTA -> PC-SCADA (hop 192.168.3.2 terlihat)
+  8. ping 8.8.8.8 dari tiap PC + show ip nat translations & statistics di R-PUSAT
+  9. running-config bagian ip route, access-list, NAT, interface Tunnel0 di R-PUSAT
+
+CATATAN KOORDINASI
+- Anggota 1: link antar-router di sheet Interface perlu diubah dari Gi0/x ke Serial (lihat Langkah 0).
+- Anggota 3 (OSPF): static route punya AD 1, OSPF AD 110, jadi route statis akan menang dan
+  failover L7 tidak terlihat. Saat tahap OSPF, hapus static route antar-router (cabang & R-PUSAT ke LAN cabang)
+  dan pertahankan default route ke ISP + NAT + GRE, atau ubah static jadi floating (AD 200).
+- Anggota 3 (DHCP): ip helper-address dipasang di interface LAN router (mis. R-DC Gi0/0 untuk CCTV);
+  tidak ada di file ini. Link L7 (R-DC .57 / R-UTARA .58) juga dari Anggota 3.
+  
